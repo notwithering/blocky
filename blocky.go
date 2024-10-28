@@ -1,13 +1,12 @@
 package blocky
 
 import (
-	"fmt"
+	"bytes"
 	"image"
 	"image/color"
 	"io"
+	"strconv"
 	"strings"
-
-	"github.com/notwithering/sgr"
 )
 
 // Encoder to encode image into printable terminal art.
@@ -29,57 +28,74 @@ func (e *Encoder) Encode(img image.Image) {
 
 func halfBlock(w io.Writer, img image.Image) {
 	bounds := img.Bounds()
-	if bounds.Dx() <= 0 || bounds.Dy() <= 0 {
-		return
-	}
+	dx := bounds.Dx()
+	dy := bounds.Dy()
 
-	var sb strings.Builder
-	sb.Grow(bounds.Dx() * bounds.Dy() * 5) // preallocate estimated size to reduce reallocations
+	var buf bytes.Buffer
+
+	// \x1b[38;2;255;255;255m\x1b[48;2;255;255;255m▀ (39 bytes)
+	// 39 bytes per pixel pair / 2 pixels = ~20 bytes per pixel
+	buf.Grow(dx * dy * 20) // preallocate estimated size to reduce reallocations
 
 	// each line contains 2 pixels arranged vertically ▀▄
-	for y := 0; y < bounds.Dy(); y += 2 {
-		for x := 0; x < bounds.Dx(); x++ {
-			// get upper and lower pixels
-			upper := img.At(x, y)
-			lower := color.RGBAModel.Convert(color.Transparent)
-			if y+1 < bounds.Dy() {
-				lower = img.At(x, y+1)
+	for y := 0; y < dy; y += 2 {
+		for x := 0; x < dx; x++ {
+			// get upper pixel
+			upperRgba := color.RGBAModel.Convert(img.At(x, y)).(color.RGBA)
+
+			// get lower pixel, default to transparent if y+1 is out of bounds
+			var lowerRgba color.RGBA
+			if y+1 < dy {
+				lowerRgba = color.RGBAModel.Convert(img.At(x, y+1)).(color.RGBA)
 			}
 
-			// convert both pixels to rgba
-			upperRgba := color.RGBAModel.Convert(upper).(color.RGBA)
-			lowerRgba := color.RGBAModel.Convert(lower).(color.RGBA)
-
-			// determine the character and sgr codes for colors
-			var char, code string
+			// write ansi code and character
+			// putting each pixel channel value as string in a variable is actually slower
+			// than just using strconv.Itoa a bazillion times, go optimizaation is weird
 			if upperRgba.A > 0 && lowerRgba.A > 0 {
-				char = "▄"
-				code = sgr.BgColorRGB + fmt.Sprintf("%d;%d;%dm", upperRgba.R, upperRgba.G, upperRgba.B)
-				code += sgr.FgColorRGB + fmt.Sprintf("%d;%d;%dm", lowerRgba.R, lowerRgba.G, lowerRgba.B)
+				buf.WriteString("\x1b[38;2;")
+				buf.WriteString(strconv.Itoa(int(upperRgba.R)))
+				buf.WriteByte(';')
+				buf.WriteString(strconv.Itoa(int(upperRgba.G)))
+				buf.WriteByte(';')
+				buf.WriteString(strconv.Itoa(int(upperRgba.B)))
+				buf.WriteByte('m')
+				buf.WriteString("\x1b[48;2;")
+				buf.WriteString(strconv.Itoa(int(lowerRgba.R)))
+				buf.WriteByte(';')
+				buf.WriteString(strconv.Itoa(int(lowerRgba.G)))
+				buf.WriteByte(';')
+				buf.WriteString(strconv.Itoa(int(lowerRgba.B)))
+				buf.WriteString("m▀")
 			} else if upperRgba.A > 0 {
-				char = "▀"
-				code = sgr.FgColorRGB + fmt.Sprintf("%d;%d;%dm", upperRgba.R, upperRgba.G, upperRgba.B) + sgr.BgDefault
+				buf.WriteString("\x1b[38;2;")
+				buf.WriteString(strconv.Itoa(int(upperRgba.R)))
+				buf.WriteByte(';')
+				buf.WriteString(strconv.Itoa(int(upperRgba.G)))
+				buf.WriteByte(';')
+				buf.WriteString(strconv.Itoa(int(upperRgba.B)))
+				buf.WriteString("m\x1b[49m▀")
 			} else if lowerRgba.A > 0 {
-				char = "▄"
-				code = sgr.BgDefault + sgr.FgColorRGB + fmt.Sprintf("%d;%d;%dm", lowerRgba.R, lowerRgba.G, lowerRgba.B)
+				buf.WriteString("\x1b[49m\x1b[38;2;")
+				buf.WriteString(strconv.Itoa(int(lowerRgba.R)))
+				buf.WriteByte(';')
+				buf.WriteString(strconv.Itoa(int(lowerRgba.G)))
+				buf.WriteByte(';')
+				buf.WriteString(strconv.Itoa(int(lowerRgba.B)))
+				buf.WriteString("m▄")
 			} else {
-				char = " "
-				code = sgr.BgDefault
+				buf.WriteString("\x1b[49m ")
 			}
-
-			// write the pair
-			sb.WriteString(code)
-			sb.WriteString(char)
 		}
 
 		// add newline only if its not the last line
-		if y+2 < bounds.Dy() {
-			sb.WriteString(sgr.Reset + "\r\n")
+		if y+2 < dy {
+			buf.WriteString("\x1b[0m\r\n")
 		}
 	}
 
-	sb.WriteString(sgr.Reset) // reset colors at the end
-	fmt.Fprint(w, sb.String())
+	buf.WriteString("\x1b[0m") // reset colors at the end
+	w.Write(buf.Bytes())
 }
 
 // EncodeToString encodes the specified image into half-block art and returns it as a string.
