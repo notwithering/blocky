@@ -95,7 +95,9 @@ func halfBlock(w io.Writer, img image.Image) {
 	}
 
 	buf.WriteString("\x1b[0m") // reset colors at the end
-	w.Write(buf.Bytes())
+	if w != nil {
+		w.Write(buf.Bytes())
+	}
 }
 
 // EncodeToString encodes the specified image into half-block art and returns it as a string.
