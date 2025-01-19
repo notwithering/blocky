@@ -26,16 +26,19 @@ func (e *Encoder) Encode(img image.Image) {
 	halfBlock(e.w, img)
 }
 
+func getMaxCapacity(bounds image.Rectangle) int {
+	// \x1b[38;2;255;255;255m\x1b[48;2;255;255;255m▀ (39 bytes)
+	// 39 bytes per pixel pair / 2 pixels = ~20 bytes per pixel
+	return bounds.Dx() * bounds.Dy() * 20
+}
+
 func halfBlock(w io.Writer, img image.Image) {
 	bounds := img.Bounds()
 	dx := bounds.Dx()
 	dy := bounds.Dy()
 
 	var buf bytes.Buffer
-
-	// \x1b[38;2;255;255;255m\x1b[48;2;255;255;255m▀ (39 bytes)
-	// 39 bytes per pixel pair / 2 pixels = ~20 bytes per pixel
-	buf.Grow(dx * dy * 20) // preallocate estimated size to reduce reallocations
+	buf.Grow(getMaxCapacity(bounds)) // preallocate estimated size to reduce reallocations
 
 	// each line contains 2 pixels arranged vertically ▀▄
 	for y := 0; y < dy; y += 2 {
@@ -51,7 +54,7 @@ func halfBlock(w io.Writer, img image.Image) {
 
 			// write ansi code and character
 			// putting each pixel channel value as string in a variable is actually slower
-			// than just using strconv.Itoa a bazillion times, go optimizaation is weird
+			// than just using strconv.Itoa a bazillion times, go optimization is weird
 			if upperRgba.A > 0 && lowerRgba.A > 0 {
 				buf.WriteString("\x1b[38;2;")
 				buf.WriteString(strconv.Itoa(int(upperRgba.R)))
@@ -103,6 +106,8 @@ func halfBlock(w io.Writer, img image.Image) {
 // EncodeToString encodes the specified image into half-block art and returns it as a string.
 func EncodeToString(img image.Image) string {
 	var sb strings.Builder
+	sb.Grow(getMaxCapacity(img.Bounds()))
+
 	halfBlock(&sb, img)
 	return sb.String()
 }
